@@ -1,7 +1,7 @@
 /* USER CODE BEGIN Header */
 /**
   ******************************************************************************
-  * @file           : main.c
+  * @file           : main.cpp
   * @brief          : Main program body
   ******************************************************************************
   * @attention
@@ -18,94 +18,48 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-
-/* Private includes ----------------------------------------------------------*/
-/* USER CODE BEGIN Includes */
-
-/* USER CODE END Includes */
-
-/* Private typedef -----------------------------------------------------------*/
-typedef enum {
-	VSENSE1,
-	VSENSE2
-} voltagePin;
+#include "radio_sx127x_spi.h"
 
 typedef enum {
-	MOSFET1,
-	MOSFET2
+	MOSFET1,    // ground/wall power
+	MOSFET2     // battery power 
 } mosfetPin;
-/* USER CODE BEGIN PTD */
 
-/* USER CODE END PTD */
-
-/* Private define ------------------------------------------------------------*/
-/* USER CODE BEGIN PD */
-
-/* USER CODE END PD */
-
-/* Private macro -------------------------------------------------------------*/
-/* USER CODE BEGIN PM */
-
-/* USER CODE END PM */
-
-/* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc1;
 SPI_HandleTypeDef hspi2;
 
-/* USER CODE BEGIN PV */
-unit16_t vsense1;
-unit16_t vsense2;
-/* USER CODE END PV */
-
-/* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
 static void MX_ADC1_Init(void);
 static void MX_SPI2_Init(void);
-/* USER CODE BEGIN PFP */
-unit16_t read_vsense(voltagePin selectV);
+
+// creating an instance for the radio packet
+RadioSx127xSpi radio(&hspi2, RADIO_nCS_GPIO_Port, RADIO_nCS_Pin, RADIO_nRST_GPIO_Port, 
+                     RADIO_nRST_Pin, 0xDA, RadioSx127xSpi::RfPort::PA_BOOST, 433000000, 15, 
+                     RadioSx127xSpi::RampTime::RT40US, RadioSx127xSpi::Bandwidth::BW250KHZ, 
+                     RadioSx127xSpi::CodingRate::CR45, RadioSx127xSpi::SpreadingFactor::SF7, 
+                     8, true, 500, 1023);
+
 static void open_mosfet(mosfetPin selectM);
 static void close_mosfet(mosfetPin selectM);
-/* USER CODE END PFP */
 
-/* Private user code ---------------------------------------------------------*/
-/* USER CODE BEGIN 0 */
-unit16_t read_vsense(voltagePin selectV) {
-	unit16_t adc_val;
-
-	switch(selectV) {
-		case VSENSE1:
-			ADC1_select_CH3();
-			break;
-		case VSENSE2:
-			ADC1_select_CH4();
-			break;
-		default:
-			break;
-	}
-
-	HAL_ADC_Start(&hadc1);
-	HAL_ADC_PollForConversion(&hadc1, HAL_MAX_DELAY);
-	adc_val = HAL_ADC_GetValue(&hadc1);
-	HAL_ADC_Stop(&hadc1);
-
-	return adc_val;
-
-}
-
-static void open_mosfet(mosfetPin selectM) {
+/*
+* @brief closes circuit of parameter mosfet
+* @param selectM payload pointer to payload buffer
+*/
+static void close_mosfet(mosfetPin selectM) { 
 	GPIO_TypeDef* mosfet_port;
-	unit16_t mosfet_pin;
+	uint16_t mosfet_pin;
 
 	switch(selectM) {
 		case MOSFET1:
 			mosfet_port = MOSFET1_GPIO_Port;
-			mosfet_pin = MOSFET1_GPIO_Pin;
+			mosfet_pin = MOSFET1_Pin;
 			HAL_GPIO_WritePin(mosfet_port, mosfet_pin, GPIO_PIN_SET);
 			break;
 		case MOSFET2:
 			mosfet_port = MOSFET2_GPIO_Port;
-			mosfet_pin = MOSFET2_GPIO_Pin;
+			mosfet_pin = MOSFET2_Pin;
 			HAL_GPIO_WritePin(mosfet_port, mosfet_pin, GPIO_PIN_SET);
 			break;
 		default:
@@ -113,19 +67,23 @@ static void open_mosfet(mosfetPin selectM) {
 	}
 }
 
-static void close_mosfet(mosfetPin selectM) {
+/*
+* @brief opens circuit of parameter mosfet
+* @param selectM payload pointer to payload buffer
+*/
+static void open_mosfet(mosfetPin selectM) { 
 	GPIO_TypeDef* mosfet_port;
-	unit16_t mosfet_pin;
+	uint16_t mosfet_pin;
 
 	switch(selectM) {
 		case MOSFET1:
 			mosfet_port = MOSFET1_GPIO_Port;
-			mosfet_pin = MOSFET1_GPIO_Pin;
+			mosfet_pin = MOSFET1_Pin;
 			HAL_GPIO_WritePin(mosfet_port, mosfet_pin, GPIO_PIN_RESET);
 			break;
 		case MOSFET2:
 			mosfet_port = MOSFET2_GPIO_Port;
-			mosfet_pin = MOSFET2_GPIO_Pin;
+			mosfet_pin = MOSFET2_Pin;
 			HAL_GPIO_WritePin(mosfet_port, mosfet_pin, GPIO_PIN_RESET);
 			break;
 		default:
@@ -133,12 +91,6 @@ static void close_mosfet(mosfetPin selectM) {
 	}
 }
 
-
-
-
-
-
-/* USER CODE END 0 */
 
 /**
   * @brief  The application entry point.
@@ -146,57 +98,78 @@ static void close_mosfet(mosfetPin selectM) {
   */
 int main(void)
 {
-  /* USER CODE BEGIN 1 */
-
-  /* USER CODE END 1 */
-
-  /* MCU Configuration--------------------------------------------------------*/
-
   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
-  /* USER CODE BEGIN Init */
-
-  /* USER CODE END Init */
+  // initialize radio and reset if it fails 
+  if (!radio.Init())
+    radio.Reset();
 
   /* Configure the system clock */
   SystemClock_Config();
-
-  /* USER CODE BEGIN SysInit */
-
-  /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_ADC1_Init();
   MX_SPI2_Init();
-  /* USER CODE BEGIN 2 */
 
-  /* USER CODE END 2 */
+  uint8_t payload[255];                     // Buffer for received data
+  int rssi;                                 // Variable to hold the received signal strength
+  uint8_t payloadLength = sizeof(payload);  // Maximum payload length
+
+  // Start recieving data
+  radio.Receive(payload, payloadLength, &rssi);
 
   /* Infinite loop */
-  /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* USER CODE END WHILE */
-	  vsense1 = read_vsense(VSENSE1);
-	  vsense2 = read_vsense(VSENSE2);
+    // Update radio state
+    RadioSx127xSpi::State state = radio.Update();
 
-	  if(vsense1 > 2000) {
-		  open_mosfet(MOSFET1);
-		  Hal_Delay(500);
-		  close_mosfet(MOSFET2);
-	  }
-	  else if(vsense1 < 2000) {
-		  if(vsense2 > 2000) {
-			  open_mosfet(MOSFET2);
-			  close_mosfet(MOSFET1);
-		  }
-	  }
-	  Hal_Delay(500);
+    if (state == RadioSx127xSpi::State::RX_COMPLETE) {
+        // Decode the packet
+        
+        // If the first bit is 1, then it CUT POWER
+        if (payload[0] & 0x80) { // 0x80 = 10000000 in binary- checking MSB
+          // open mosfets to cut power entirely 
+          open_mosfet(MOSFET1);
+          open_mosfet(MOSFET2);
+        }
+
+        // If the second bit is 1, then it is connected to wall/ground power
+        else if (payload[0] & 0x40) { // 0x80 = 01000000 in binary- checking MSB
+          // connect wall/ground power
+          close_mosfet(MOSFET1);
+          // disconnect battery power
+          open_mosfet(MOSFET2);
+        }
+
+        // If the third bit is 1, then it is connected to battery power
+        else if (payload[0] & 0x20) { // 0x80 = 00100000 in binary- checking MSB
+          // connect battery power
+          close_mosfet(MOSFET2);
+          // disconnect ground/wall power
+          open_mosfet(MOSFET1);
+        }
+
+        // Prepare for next packet
+        radio.Receive(payload, payloadLength, &rssi);
+    }
+
+    /**************ERROR CHECKING******************/
+    else if (state == RadioSx127xSpi::State::RX_TIMEOUT){
+      // Restart receiving
+      radio.Receive(payload, payloadLength, &rssi);
+    }
+    else if (state == RadioSx127xSpi::State::ERROR){
+      // Reinitialize radio
+      if (!radio.Init())
+        radio.Reset();
+
+      // restart receiving
+      radio.Receive(payload, payloadLength, &rssi);
+    }
   }
-    /* USER CODE BEGIN 3 */
-  /* USER CODE END 3 */
 }
 
 /**
@@ -370,29 +343,6 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
-static void ADC1_Select_CH3(void) {
-    ADC_ChannelConfTypeDef sConfig = {0};
-
-    sConfig.Channel = ADC_CHANNEL_3;
-    sConfig.Rank = ADC_REGULAR_RANK_1;
-    sConfig.SamplingTime = ADC_SAMPLETIME_7CYCLES_5;
-    if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-    {
-        Error_Handler();
-    }
-}
-
-static void ADC1_Select_CH4(void) {
-    ADC_ChannelConfTypeDef sConfig = {0};
-
-    sConfig.Channel = ADC_CHANNEL_4;
-    sConfig.Rank = ADC_REGULAR_RANK_1;
-    sConfig.SamplingTime = ADC_SAMPLETIME_7CYCLES_5;
-    if (HAL_ADC_ConfigChannel(&hadc1, &sConfig) != HAL_OK)
-    {
-        Error_Handler();
-    }
-}
 
 /* USER CODE END 4 */
 
