@@ -19,12 +19,32 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include <stdio.h>
+#include <cmath>
 #include "radio_sx127x_spi.h"
+
+using namespace std; 
 
 typedef enum {
 	MOSFET1,    // ground/wall power
 	MOSFET2     // battery power 
 } mosfetPin;
+
+struct AdcData {
+  uint32_t supplyBattery;     // V_Sense1
+  uint32_t ecuBattery;        // V_Sense2 
+}; 
+
+struct BatteryData {
+  uint32_t timestamp; 
+  float supplyVoltage = std::nanf("");
+  float ecuVoltage = std::nanf("");
+};
+
+struct CommandPacket {
+  uint8_t id; 
+  uint16_t sequence; 
+};
 
 ADC_HandleTypeDef hadc1;
 SPI_HandleTypeDef hspi2;
@@ -43,6 +63,130 @@ RadioSx127xSpi radio(&hspi2, RADIO_nCS_GPIO_Port, RADIO_nCS_Pin, RADIO_nRST_GPIO
 
 static void open_mosfet(mosfetPin selectM);
 static void close_mosfet(mosfetPin selectM);
+
+/**
+  * @brief  The application entry point.
+  * @retval int
+  */
+ int main(void)
+ {
+   /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
+   HAL_Init();
+ 
+   /* Configure the system clock */
+   SystemClock_Config();
+ 
+   /* Initialize all configured peripherals */
+   MX_GPIO_Init();
+   MX_ADC1_Init();
+   MX_SPI2_Init();
+
+   // initialize radio and reset if it fails 
+   if (!radio.Init())
+   radio.Reset();
+
+   CommandPacket commandPacket; 
+   int rssi;                                 
+
+   BatteryData batteryData; 
+
+   uint16_t lastCommandSequence = 0; 
+   uint8_t lastCommandId = 0x0F;
+   int16_t lastCommandRssi = 0; 
+
+   // Start recieving data
+   radio.Receive((uint8_t *)&commandPacket, sizeof(CommandPacket), &rssi);
+ 
+   /* Infinite loop */
+   while (1)
+   {
+     char buffer[1024] = {0};
+
+     uint32_t timestamp = HAL_GetTick(); // replace later with timers 
+     batteryData.timestamp = timestamp;
+
+     // Update radio state
+     RadioSx127xSpi::State state = radio.Update();
+ 
+     if (state == RadioSx127xSpi::State::RX_COMPLETE) {
+        if (commandPacket.sequence <= lastCommandSequence){
+          radio.Receive((uint8_t *)&commandPacket, sizeof(CommandPacket), &rssi);
+          break; 
+        }
+        sprintf(buffer, 
+                "Radio packet recieved: %02X\r\n"
+                "Timestamp: %08X\r\n",
+                commandPacket.id,
+                (unsigned int)(batteryData.timestamp));
+
+         // Process the packet
+        switch (commandPacket.id){
+          case 0x00: // cut power
+            open_mosfet(MOSFET1);
+            open_mosfet(MOSFET2);
+            break; 
+            
+          case 0xF8: // connect to wall/ground power and disconnect from battery 
+            // connect wall/ground power
+            close_mosfet(MOSFET1);
+            // disconnect battery power
+            open_mosfet(MOSFET2);
+            break; 
+
+          case 0x1F: // connect to battery and disconnect from wall power
+            // connect battery power
+            close_mosfet(MOSFET2);
+            // disconnect ground/wall power
+            open_mosfet(MOSFET1);
+            break; 
+
+          default: 
+            sprintf(buffer, "Unknown command: ");
+            radio.Receive((uint8_t *)&commandPacket, sizeof(CommandPacket), &rssi);
+            break; 
+        } // end switch
+
+        // checking battery data 
+        AdcData rawData = {0};
+        for (int i = 0; i < 16; i++) {
+          HAL_ADC_Start(&hadc1); 
+
+          HAL_ADC_PollForConversion(&hadc1, 10);
+
+          uint32_t data1 = HAL_ADC_GetValue(&hadc1);
+          *(((uint32_t *)&rawData) + i) += data1;
+        }
+        // convert to volts-- may need calibration
+        batteryData.ecuVoltage = 0.062f * (float)rawData.ecuBattery;
+        batteryData.supplyVoltage = 0.062 * (float)rawData.supplyBattery;
+        
+        sprintf(buffer, 
+                "No power connect\r\n"
+                "ECU Voltage: %04d  Supply Voltage: %04d"
+                "--------------------\r\n",
+                (int)(batteryData.ecuVoltage), (int)(batteryData.supplyVoltage));
+        lastCommandId = commandPacket.id;
+        lastCommandSequence = commandPacket.sequence; 
+        lastCommandRssi = (int16_t)rssi;
+      } // end if 
+
+      /**************ERROR CHECKING******************/
+      else if ((state == RadioSx127xSpi::State::RX_TIMEOUT) ||
+               (state == RadioSx127xSpi::State::IDLE)){
+        // Restart receiving
+        radio.Receive((uint8_t *)&commandPacket, sizeof(CommandPacket), &rssi);
+      } // end else if timeout
+
+      else if (state == RadioSx127xSpi::State::ERROR){
+        // Reinitialize radio
+        if (!radio.Init())
+          radio.Reset();
+
+        // restart receiving
+        radio.Receive((uint8_t *)&commandPacket, sizeof(CommandPacket), &rssi);
+      } // end else if timeout     
+   } // end while 
+ }
 
 /*
 * @brief closes circuit of parameter mosfet
@@ -90,87 +234,6 @@ static void open_mosfet(mosfetPin selectM) {
 		default:
 			break;
 	}
-}
-
-
-/**
-  * @brief  The application entry point.
-  * @retval int
-  */
-int main(void)
-{
-  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
-  HAL_Init();
-
-  // initialize radio and reset if it fails 
-  if (!radio.Init())
-    radio.Reset();
-
-  /* Configure the system clock */
-  SystemClock_Config();
-
-  /* Initialize all configured peripherals */
-  MX_GPIO_Init();
-  MX_ADC1_Init();
-  MX_SPI2_Init();
-
-  uint8_t payload[255];                     // Buffer for received data
-  int rssi;                                 // Variable to hold the received signal strength
-  uint8_t payloadLength = sizeof(payload);  // Maximum payload length
-
-  // Start recieving data
-  radio.Receive(payload, payloadLength, &rssi);
-
-  /* Infinite loop */
-  while (1)
-  {
-    // Update radio state
-    RadioSx127xSpi::State state = radio.Update();
-
-    if (state == RadioSx127xSpi::State::RX_COMPLETE) {
-        // Decode the packet
-        
-        // If the first bit is 1, then it CUT POWER
-        if (payload[0] & 0x80) { // 0x80 = 10000000 in binary- checking MSB
-          // open mosfets to cut power entirely 
-          open_mosfet(MOSFET1);
-          open_mosfet(MOSFET2);
-        }
-
-        // If the second bit is 1, then it is connected to wall/ground power
-        else if (payload[0] & 0x40) { // 0x80 = 01000000 in binary- checking MSB
-          // connect wall/ground power
-          close_mosfet(MOSFET1);
-          // disconnect battery power
-          open_mosfet(MOSFET2);
-        }
-
-        // If the third bit is 1, then it is connected to battery power
-        else if (payload[0] & 0x20) { // 0x80 = 00100000 in binary- checking MSB
-          // connect battery power
-          close_mosfet(MOSFET2);
-          // disconnect ground/wall power
-          open_mosfet(MOSFET1);
-        }
-
-        // Prepare for next packet
-        radio.Receive(payload, payloadLength, &rssi);
-    }
-
-    /**************ERROR CHECKING******************/
-    else if (state == RadioSx127xSpi::State::RX_TIMEOUT){
-      // Restart receiving
-      radio.Receive(payload, payloadLength, &rssi);
-    }
-    else if (state == RadioSx127xSpi::State::ERROR){
-      // Reinitialize radio
-      if (!radio.Init())
-        radio.Reset();
-
-      // restart receiving
-      radio.Receive(payload, payloadLength, &rssi);
-    }
-  }
 }
 
 /**
