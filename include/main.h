@@ -95,6 +95,8 @@ void Error_Handler(void);
 #define MCU_TDI_GPIO_Port GPIOA
 #define MCU_TDO_Pin GPIO_PIN_3
 #define MCU_TDO_GPIO_Port GPIOB
+#define Status_LED_Pin GPIO_PIN_8
+#define Status_LED_GPIO_Port GPIOB
 
 /* USER CODE BEGIN Private defines */
 

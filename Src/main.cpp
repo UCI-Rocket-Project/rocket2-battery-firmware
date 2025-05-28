@@ -83,7 +83,7 @@ static void close_mosfet(mosfetPin selectM);
 
    // initialize radio and reset if it fails 
    if (!radio.Init())
-   radio.Reset();
+    radio.Reset();
 
    CommandPacket commandPacket; 
    int rssi;                                 
@@ -99,7 +99,11 @@ static void close_mosfet(mosfetPin selectM);
  
    /* Infinite loop */
    while (1)
-   {
+   { 
+    HAL_GPIO_WritePin(MOSFET2_GPIO_Port, MOSFET2_Pin, GPIO_PIN_SET);
+	  HAL_GPIO_WritePin(Status_LED_GPIO_Port, Status_LED_Pin, GPIO_PIN_SET);
+    HAL_Delay(1000);
+
      char buffer[1024] = {0};
 
      uint32_t timestamp = HAL_GetTick(); // replace later with timers 
