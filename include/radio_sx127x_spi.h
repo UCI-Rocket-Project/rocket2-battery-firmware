@@ -103,6 +103,9 @@ class RadioSx127xSpi {
         SF12 = 12
     };
 
+    // main state machine variable for radio
+    State _state = State::NOT_INIT;
+
     /**
      * @param hspi SPI bus handler
      * @param csPort chip select GPIO port
@@ -183,7 +186,6 @@ class RadioSx127xSpi {
     unsigned int _serialTimeout;
 
     uint32_t _txStartTime;
-    State _state = State::NOT_INIT;
     uint8_t *_payload;
     uint8_t _payloadLength;
     int *_rssi;
