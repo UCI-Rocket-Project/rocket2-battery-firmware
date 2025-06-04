@@ -56,10 +56,10 @@ static void MX_SPI2_Init(void);
 
 // creating an instance for the radio packet
 RadioSx127xSpi radio(&hspi2, RADIO_nCS_GPIO_Port, RADIO_nCS_Pin, RADIO_nRST_GPIO_Port, 
-                     RADIO_nRST_Pin, 0xDA, RadioSx127xSpi::RfPort::PA_BOOST, 433000000, 15, 
+                     RADIO_nRST_Pin, 0xDA, RadioSx127xSpi::RfPort::PA_BOOST, 915000000, 15, 
                      RadioSx127xSpi::RampTime::RT40US, RadioSx127xSpi::Bandwidth::BW250KHZ, 
                      RadioSx127xSpi::CodingRate::CR45, RadioSx127xSpi::SpreadingFactor::SF7, 
-                     8, true, 5000, 1023);
+                     8, true, 500, 1023);
 
 static void open_mosfet(mosfetPin selectM);
 static void close_mosfet(mosfetPin selectM);
@@ -81,54 +81,53 @@ static void close_mosfet(mosfetPin selectM);
    MX_ADC1_Init();
    MX_SPI2_Init();
 
-  //  // initialize radio and reset if it fails 
+   // initialize radio and reset if it fails 
   //  if (!radio.Init())
   //   radio.Reset();
 
-  //  CommandPacket commandPacket; 
-  //  int rssi;                                 
+    radio.Reset();
+    radio.Init();
 
-  //  BatteryData batteryData; 
+   CommandPacket commandPacket; 
+   int rssi;                                 
 
-  //  uint16_t lastCommandSequence = 0; 
-  //  uint8_t lastCommandId = 0x0F;
-  //  int16_t lastCommandRssi = 0; 
+   BatteryData batteryData; 
 
-  //  // Start recieving data
+   uint16_t lastCommandSequence = 0; 
+   uint8_t lastCommandId = 0x0F;
+   int16_t lastCommandRssi = 0; 
+
+   // Start recieving data
   //  radio.Receive((uint8_t *)&commandPacket, sizeof(CommandPacket), &rssi);
 
-  volatile int lol; // for testing, lol
-
-  /* Reset all of the senesors before init*/
-  lol = radio.Reset();
-
-  // Init all of the sensors
-  lol = radio.Init();
-
-  HAL_GPIO_WritePin(Status_LED_GPIO_Port, Status_LED_Pin, GPIO_PIN_SET);
  
    /* Infinite loop */
    while (1)
    { 
+    HAL_GPIO_WritePin(MOSFET2_GPIO_Port, MOSFET2_Pin, GPIO_PIN_SET);
 
     /* Radio */
     // first radio at 915 MHz
-    uint8_t memoryBuffer[100];
+    uint8_t memoryBuffer[20] = {0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D, 0x1D};
     if (radio._state == RadioSx127xSpi::State::IDLE || 
         radio._state == RadioSx127xSpi::State::TX_COMPLETE){
         // memcpy(memoryBuffer, &data, sizeof(data));
         radio.Transmit(memoryBuffer, sizeof(memoryBuffer));
-        HAL_GPIO_TogglePin(Status_LED_GPIO_Port,Status_LED_Pin);
-    }
-    else if (radio._state == RadioSx127xSpi::State::TX_START ||
-        radio._state == RadioSx127xSpi::State::TX_IN_PROGRESS){
-        radio.Update();
-        HAL_GPIO_TogglePin(Status_LED_GPIO_Port,Status_LED_Pin);
+        HAL_GPIO_WritePin(MOSFET2_GPIO_Port, MOSFET2_Pin, GPIO_PIN_RESET);
         HAL_Delay(500);
     }
+    if (radio._state == RadioSx127xSpi::State::TX_START ||
+        radio._state == RadioSx127xSpi::State::TX_IN_PROGRESS){
+        radio.Update();
+    }
 
-    // HAL_GPIO_WritePin(MOSFET2_GPIO_Port, MOSFET2_Pin, GPIO_PIN_SET);
-	  // HAL_GPIO_WritePin(Status_LED_GPIO_Port, Status_LED_Pin, GPIO_PIN_SET);
+    // if (radio._state == RadioSx127xSpi::State::TX_COMPLETE){
+    //   HAL_GPIO_WritePin(Status_LED_GPIO_Port, Status_LED_Pin, GPIO_PIN_RESET);
+    //   HAL_Delay(500);
+    // }
+
+
+    
     // HAL_Delay(1000);
 
     //  char buffer[1024] = {0};
