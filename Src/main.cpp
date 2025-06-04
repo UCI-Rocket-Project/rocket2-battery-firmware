@@ -56,7 +56,7 @@ static void MX_SPI2_Init(void);
 
 // creating an instance for the radio packet
 RadioSx127xSpi radio(&hspi2, RADIO_nCS_GPIO_Port, RADIO_nCS_Pin, RADIO_nRST_GPIO_Port, 
-                     RADIO_nRST_Pin, 0xDA, RadioSx127xSpi::RfPort::PA_BOOST, 915000000, 15, 
+                     RADIO_nRST_Pin, 0xDA, RadioSx127xSpi::RfPort::RFO, 915000000, 0,  
                      RadioSx127xSpi::RampTime::RT40US, RadioSx127xSpi::Bandwidth::BW250KHZ, 
                      RadioSx127xSpi::CodingRate::CR45, RadioSx127xSpi::SpreadingFactor::SF7, 
                      8, true, 500, 1023);
